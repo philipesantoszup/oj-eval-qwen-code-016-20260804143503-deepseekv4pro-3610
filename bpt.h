@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <cstdio>
 #include <cstring>
+#include <climits>
 
 constexpr int PAGE_SIZE = 4096;
 constexpr int MAX_KEY_LEN = 64;
@@ -54,10 +55,9 @@ private:
 
     static constexpr uint32_t MAGIC = 0x42505421;
 
-    // Based on 64-byte max key: floor((4096-7)/(1+64+4)) = 59
-    static constexpr int MAX_ENTRIES = 59;
-    static constexpr int MIN_ENTRIES_LEAF = 29;
-    static constexpr int MIN_KEYS_INTERNAL = 29;
+    // Thresholds for rebalancing
+    static constexpr int MIN_ENTRIES_LEAF = 20;
+    static constexpr int MIN_KEYS_INTERNAL = 20;
 
     // Page cache
     uint8_t* get_page(uint32_t page_num);
@@ -77,7 +77,7 @@ private:
     static int32_t read_i32(const uint8_t* p);
     static void write_i32(uint8_t* p, int32_t v);
 
-    // Page field accessors (on buffer)
+    // Page field accessors
     static bool is_leaf(const uint8_t* p);
     static void set_leaf(uint8_t* p, bool v);
     static uint16_t num_entries(const uint8_t* p);
@@ -87,11 +87,7 @@ private:
     static uint32_t first_child(const uint8_t* p);
     static void set_first_child(uint8_t* p, uint32_t v);
 
-    // Entry access
-    static int find_pos(const uint8_t* page, const std::string& key);
-    static int find_child(const uint8_t* page, const std::string& key);
-    static int find_entry(const uint8_t* page, const std::string& key, int value);
-
+    // Entry access (position-based)
     static int entry_offset(const uint8_t* page, int pos);
     static int entry_size_at(const uint8_t* page, int off);
 
@@ -100,16 +96,32 @@ private:
     static uint32_t get_child(const uint8_t* page, int child_idx);
 
     static int space_used(const uint8_t* page);
-    static bool can_insert(const uint8_t* page, const std::string& key);
+    static int entry_bytes_needed(const std::string& key, bool leaf);
+    static bool can_insert(const uint8_t* page, const std::string& key, bool leaf);
+
+    // Comparison: (key, value) pairs
+    // Returns true if entry at pos has (key, value) < (search_key, search_value)
+    static bool entry_less(const uint8_t* page, int pos, const std::string& key, int value);
+    // Returns first position where entry >= (key, value) — lower_bound
+    static int find_pos(const uint8_t* page, const std::string& key, int value);
+    // Returns first position where entry > (key, value) — upper_bound
+    static int find_child_idx(const uint8_t* page, const std::string& key, int value);
+    // Find exact (key, value) match in leaf, returns position or -1
+    static int find_entry(const uint8_t* page, const std::string& key, int value);
 
     // Modify page
-    static void insert_entry(uint8_t* page, int pos, const std::string& key, int32_t val_or_child, bool leaf);
+    // Insert entry into leaf: (key, value)
+    static void insert_leaf_entry(uint8_t* page, int pos, const std::string& key, int32_t value);
+    // Insert entry into internal: (key, value, child)
+    static void insert_internal_entry(uint8_t* page, int pos, const std::string& key, int32_t value, uint32_t child);
+    // Remove entry at position
     static void remove_entry(uint8_t* page, int pos);
 
     // Recursive operations
     struct SplitResult {
         bool split;
         std::string key;
+        int32_t value;    // separator value
         uint32_t new_page;
     };
 
