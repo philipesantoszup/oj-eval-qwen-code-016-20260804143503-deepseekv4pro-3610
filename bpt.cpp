@@ -282,7 +282,6 @@ void BPTree::mark_dirty(uint32_t page_num) {
 
 uint32_t BPTree::alloc_page() {
     uint32_t page = next_free_++;
-    write_header();
     uint8_t* p = get_page(page);
     std::memset(p, 0, PAGE_SIZE);
     mark_dirty(page);
@@ -322,6 +321,7 @@ void BPTree::write_header() {
 }
 
 void BPTree::flush_dirty() {
+    write_header();  // Sync header before writing
     for (auto& [num, cp] : cache_) {
         if (cp.dirty) {
             std::fseek(file_, (long)num * PAGE_SIZE, SEEK_SET);
@@ -380,7 +380,6 @@ void BPTree::insert(const std::string& key, int value) {
         root_page_ = new_page;
         first_leaf_ = new_page;
         total_entries_ = 1;
-        write_header();
         return;
     }
 
@@ -395,7 +394,6 @@ void BPTree::insert(const std::string& key, int value) {
         mark_dirty(new_root);
 
         root_page_ = new_root;
-        write_header();
     }
 }
 
@@ -456,9 +454,6 @@ BPTree::SplitResult BPTree::insert_rec(uint32_t page_num, const std::string& key
             mark_dirty(page_num);
             mark_dirty(right_page);
             total_entries_++;
-            write_header();
-
-            // Separator is first entry of right leaf: (key, value)
             return {true, entries[mid].key, entries[mid].value, right_page};
         }
 
@@ -467,7 +462,6 @@ BPTree::SplitResult BPTree::insert_rec(uint32_t page_num, const std::string& key
         insert_leaf_entry(page, pos, key, value);
         mark_dirty(page_num);
         total_entries_++;
-        write_header();
         return {false, "", 0, 0};
     }
 
@@ -553,11 +547,9 @@ bool BPTree::remove(const std::string& key, int value) {
         if (!is_leaf(root) && num_entries(root) == 0) {
             uint32_t new_root = first_child(root);
             root_page_ = new_root;
-            write_header();
         } else if (is_leaf(root) && num_entries(root) == 0) {
             root_page_ = 0;
             first_leaf_ = 0;
-            write_header();
         }
     }
 
@@ -574,8 +566,6 @@ bool BPTree::delete_rec(uint32_t page_num, const std::string& key, int value) {
         remove_entry(page, pos);
         mark_dirty(page_num);
         total_entries_--;
-        write_header();
-
         return (page_num != root_page_) && (num_entries(page) < MIN_ENTRIES_LEAF);
     }
 
@@ -758,7 +748,6 @@ void BPTree::rebalance(uint32_t parent_num, int child_idx) {
 
         if (child_is_leaf && child_page == first_leaf_) {
             first_leaf_ = left_page;
-            write_header();
         }
         return;
     }
@@ -796,7 +785,6 @@ void BPTree::rebalance(uint32_t parent_num, int child_idx) {
 
         if (child_is_leaf && right_page == first_leaf_) {
             first_leaf_ = child_page;
-            write_header();
         }
         return;
     }
