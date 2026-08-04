@@ -581,7 +581,7 @@ bool BPTree::delete_rec(uint32_t page_num, const std::string& key, int value) {
         remove_entry(page, pos);
         mark_dirty(page_num);
         total_entries_--;
-        return (page_num != root_page_) && (num_entries(page) < MIN_ENTRIES_LEAF);
+        return false;  // Never rebalance — lazy deletion
     }
 
     // Internal node
@@ -589,13 +589,11 @@ bool BPTree::delete_rec(uint32_t page_num, const std::string& key, int value) {
     uint32_t child_page = get_child(page, child_idx);
 
     bool needs_rebalance = delete_rec(child_page, key, value);
-
-    if (needs_rebalance) {
-        rebalance(page_num, child_idx);
-    }
+    // Lazy deletion: never rebalance
+    (void)needs_rebalance;
 
     page = get_page(page_num);
-    return (page_num != root_page_) && (num_entries(page) < MIN_KEYS_INTERNAL);
+    return false;  // Never rebalance
 }
 
 void BPTree::rebalance(uint32_t parent_num, int child_idx) {
