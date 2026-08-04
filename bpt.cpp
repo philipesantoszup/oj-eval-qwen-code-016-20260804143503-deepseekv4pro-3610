@@ -128,7 +128,29 @@ bool BPTree::can_insert(const uint8_t* page, const std::string& key, bool leaf) 
     return space_used(page) + needed <= PAGE_SIZE;
 }
 
-// ============ Comparison ============
+// ============ Comparison helpers (no string allocation) ============
+
+// Compare key at page offset with a search key
+// Returns -1 if page_key < search_key, 0 if equal, 1 if page_key > search_key
+static int key_compare(const uint8_t* page, int off, const std::string& search_key) {
+    int key_len = page[off];
+    const char* key_data = reinterpret_cast<const char*>(page + off + 1);
+    int min_len = key_len < (int)search_key.size() ? key_len : (int)search_key.size();
+    int cmp = std::memcmp(key_data, search_key.data(), min_len);
+    if (cmp != 0) return cmp;
+    if (key_len < (int)search_key.size()) return -1;
+    if (key_len > (int)search_key.size()) return 1;
+    return 0;
+}
+
+// Check if key at page offset exactly matches search_key
+static bool key_matches(const uint8_t* page, int off, const std::string& search_key) {
+    int key_len = page[off];
+    if (key_len != (int)search_key.size()) return false;
+    return std::memcmp(page + off + 1, search_key.data(), key_len) == 0;
+}
+
+// ============ Comparison (with string allocation, for non-hot paths) ============
 
 bool BPTree::entry_less(const uint8_t* page, int pos, const std::string& key, int value) {
     int off = entry_offset(page, pos);
@@ -144,10 +166,9 @@ int BPTree::find_pos(const uint8_t* page, const std::string& key, int value) {
     int n = num_entries(page);
     int off = OFF_ENTRIES;
     for (int i = 0; i < n; i++) {
-        int key_len = page[off];
-        std::string k(reinterpret_cast<const char*>(page + off + 1), key_len);
-        int32_t v = read_i32(page + off + 1 + key_len);
-        if (k > key || (k == key && v >= value)) return i;
+        int cmp = key_compare(page, off, key);
+        int32_t v = read_i32(page + off + 1 + page[off]);
+        if (cmp > 0 || (cmp == 0 && v >= value)) return i;
         off += entry_size_at(page, off);
     }
     return n;
@@ -158,10 +179,9 @@ int BPTree::find_child_idx(const uint8_t* page, const std::string& key, int valu
     int n = num_entries(page);
     int off = OFF_ENTRIES;
     for (int i = 0; i < n; i++) {
-        int key_len = page[off];
-        std::string k(reinterpret_cast<const char*>(page + off + 1), key_len);
-        int32_t v = read_i32(page + off + 1 + key_len);
-        if (k > key || (k == key && v > value)) return i;
+        int cmp = key_compare(page, off, key);
+        int32_t v = read_i32(page + off + 1 + page[off]);
+        if (cmp > 0 || (cmp == 0 && v > value)) return i;
         off += entry_size_at(page, off);
     }
     return n;
@@ -171,10 +191,8 @@ int BPTree::find_entry(const uint8_t* page, const std::string& key, int value) {
     int n = num_entries(page);
     int off = OFF_ENTRIES;
     for (int i = 0; i < n; i++) {
-        int key_len = page[off];
-        std::string k(reinterpret_cast<const char*>(page + off + 1), key_len);
-        if (k == key) {
-            int32_t v = read_i32(page + off + 1 + key_len);
+        if (key_matches(page, off, key)) {
+            int32_t v = read_i32(page + off + 1 + page[off]);
             if (v == value) return i;
         }
         off += entry_size_at(page, off);
@@ -798,24 +816,21 @@ std::vector<int> BPTree::find(const std::string& key) {
                 page = get_page(page_num);
                 int n = num_entries(page);
                 int off = OFF_ENTRIES;
+                int last_off = OFF_ENTRIES;
                 bool found_any = false;
                 for (int i = 0; i < n; i++) {
-                    int key_len = page[off];
-                    std::string k(reinterpret_cast<const char*>(page + off + 1), key_len);
-                    if (k == key) {
-                        int32_t v = read_i32(page + off + 1 + key_len);
+                    if (key_matches(page, off, key)) {
+                        int32_t v = read_i32(page + off + 1 + page[off]);
                         results.push_back(v);
                         found_any = true;
                     } else if (found_any) {
                         return results;
                     }
+                    last_off = off;
                     off += entry_size_at(page, off);
                 }
                 if (found_any && n > 0) {
-                    int last_off = entry_offset(page, n - 1);
-                    int last_key_len = page[last_off];
-                    std::string last_k(reinterpret_cast<const char*>(page + last_off + 1), last_key_len);
-                    if (last_k != key) {
+                    if (!key_matches(page, last_off, key)) {
                         return results;
                     }
                 }
