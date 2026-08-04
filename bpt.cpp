@@ -415,8 +415,15 @@ BPTree::SplitResult BPTree::insert_rec(uint32_t page_num, const std::string& key
             };
             std::vector<Entry> entries;
             entries.reserve(n + 1);
+            // Sequential traversal to avoid O(n^2) entry_offset calls
+            int off = OFF_ENTRIES;
             for (int i = 0; i < n; i++) {
-                entries.push_back({get_key(page, i), get_value(page, i)});
+                int key_len = page[off];
+                entries.push_back({
+                    std::string(reinterpret_cast<const char*>(page + off + 1), key_len),
+                    read_i32(page + off + 1 + key_len)
+                });
+                off += entry_size_at(page, off);
             }
             auto it = std::lower_bound(entries.begin(), entries.end(), Entry{key, value},
                 [](const Entry& a, const Entry& b) {
@@ -484,8 +491,16 @@ BPTree::SplitResult BPTree::insert_rec(uint32_t page_num, const std::string& key
             };
             std::vector<KV> kvs;
             kvs.reserve(n + 1);
+            // Sequential traversal
+            int off2 = OFF_ENTRIES;
             for (int i = 0; i < n; i++) {
-                kvs.push_back({get_key(page, i), get_value(page, i), get_child(page, i + 1)});
+                int key_len = page[off2];
+                kvs.push_back({
+                    std::string(reinterpret_cast<const char*>(page + off2 + 1), key_len),
+                    read_i32(page + off2 + 1 + key_len),
+                    read_u32(page + off2 + 1 + key_len + 4)
+                });
+                off2 += entry_size_at(page, off2);
             }
 
             auto it = std::lower_bound(kvs.begin(), kvs.end(), sr.key,
